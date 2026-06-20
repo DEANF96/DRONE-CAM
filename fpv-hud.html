@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+<title>Eazy-Fix FPV HUD</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rubik:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --hud-green: #5CFF7A;
+    --hud-green-dim: rgba(92,255,122,0.45);
+    --hud-amber: #FFB300;
+    --hud-red: #FF4D4D;
+    --panel-bg: rgba(7,11,12,0.72);
+    --panel-border: rgba(92,255,122,0.25);
+    --ink: #E7F5EA;
+    --ink-dim: #93A89A;
+    --mono: 'Share Tech Mono', monospace;
+    --sans: 'Rubik', sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; width:100%; height:100%;
+    background:#000; overflow:hidden;
+    font-family: var(--sans);
+    color: var(--ink);
+    -webkit-user-select:none; user-select:none;
+  }
+  #stage{
+    position:fixed; inset:0; width:100%; height:100%;
+    background:#000;
+  }
+  #video{
+    position:absolute; inset:0; width:100%; height:100%;
+    object-fit:cover; background:#000;
+    transform-origin:center center;
+  }
+  #placeholder{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    flex-direction:column; gap:14px; text-align:center; padding:0 24px;
+    color: var(--ink-dim);
+  }
+  #placeholder svg{ width:64px; height:64px; opacity:.5; }
+  #placeholder h1{ font-size:18px; font-weight:700; color:var(--ink); margin:0; }
+  #placeholder p{ font-size:13px; line-height:1.6; margin:0; max-width:420px; }
+  #hud{
+    position:absolute; inset:0; width:100%; height:100%;
+    pointer-events:none;
+    direction: ltr; /* HUD geometry stays left/right-true regardless of page direction */
+  }
+  #analysis{ display:none; }
+
+  /* ---------- top status strip (LTR, mirrors real OSD left/right convention) ---------- */
+  #topbar{
+    position:absolute; top:0; left:0; right:0; direction:ltr;
+    display:flex; justify-content:space-between; align-items:flex-start;
+    padding:10px 14px; pointer-events:none;
+    font-family: var(--mono); font-size:13px; letter-spacing:.5px;
+  }
+  .chip{
+    background: var(--panel-bg); border:1px solid var(--panel-border);
+    border-radius:6px; padding:5px 10px; display:flex; align-items:center; gap:7px;
+    backdrop-filter: blur(6px);
+  }
+  .dot{ width:8px; height:8px; border-radius:50%; background:var(--ink-dim); flex:none; }
+  .dot.good{ background:var(--hud-green); box-shadow:0 0 6px var(--hud-green); }
+  .dot.warn{ background:var(--hud-amber); box-shadow:0 0 6px var(--hud-amber); }
+  .dot.bad{ background:var(--hud-red); box-shadow:0 0 6px var(--hud-red); }
+  .rec-dot{ width:9px; height:9px; border-radius:50%; background:var(--hud-red); flex:none; }
+  .rec-dot.live{ animation: blink 1s steps(2,start) infinite; }
+  @keyframes blink{ 50%{ opacity:.15; } }
+
+  /* ---------- bottom control bar (RTL, human-facing) ---------- */
+  #controls{
+    position:absolute; left:0; right:0; bottom:0; direction:rtl;
+    padding:12px 14px calc(12px + env(safe-area-inset-bottom));
+    background: linear-gradient(to top, rgba(0,0,0,0.78), rgba(0,0,0,0));
+    pointer-events:auto;
+  }
+  #controlsInner{
+    max-width:980px; margin:0 auto;
+    background: var(--panel-bg); border:1px solid var(--panel-border);
+    border-radius:14px; padding:12px; backdrop-filter: blur(8px);
+  }
+  .row{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .row + .row{ margin-top:8px; }
+  select, button{
+    font-family: var(--sans); font-size:13px; font-weight:500;
+    border-radius:9px; border:1px solid var(--panel-border);
+    background: rgba(255,255,255,0.04); color:var(--ink);
+    padding:9px 12px; cursor:pointer; transition: all .15s ease;
+  }
+  select{ flex:1 1 200px; min-width:140px; }
+  button{ display:flex; align-items:center; gap:6px; white-space:nowrap; }
+  button:hover{ background: rgba(92,255,122,0.10); border-color: var(--hud-green-dim); }
+  button:active{ transform: scale(0.97); }
+  button:disabled{ opacity:.4; cursor:not-allowed; }
+  button.primary{ background: var(--hud-green); color:#04150A; border-color:var(--hud-green); font-weight:700; }
+  button.primary:hover{ filter:brightness(1.08); }
+  button.danger{ background: var(--hud-red); color:#1A0000; border-color:var(--hud-red); font-weight:700; }
+  button.ghost{ background:transparent; }
+  button.toggled{ background: rgba(92,255,122,0.18); border-color:var(--hud-green); color:var(--hud-green); }
+  #status{ font-size:12px; color:var(--ink-dim); margin-top:8px; line-height:1.6; }
+  #status b{ color: var(--ink); }
+  #downloadWrap{ display:none; margin-top:8px; }
+  #downloadWrap a{
+    display:inline-flex; align-items:center; gap:6px; font-size:13px; color:var(--hud-green);
+    text-decoration:none; border:1px solid var(--hud-green-dim); border-radius:9px; padding:8px 12px;
+  }
+  .spacer{ flex:1 1 auto; }
+  .hidden{ display:none !important; }
+  #panelToggle{
+    display:block; margin:8px auto 0; pointer-events:auto;
+    background: var(--panel-bg); border-radius:20px; padding:6px 16px; font-size:12px;
+  }
+
+  @media (max-width: 560px){
+    select{ flex:1 1 100%; }
+    #topbar{ font-size:11px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <video id="video" autoplay playsinline muted></video>
+
+  <div id="placeholder">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M3 7l5 3v4l-5 3V7z"/><rect x="9" y="6" width="12" height="12" rx="2"/></svg>
+    <h1>אין מצלמה פעילה</h1>
+    <p>בחרו מקור וידאו (כרטיס קליטה / מקלט FPV / מצלמת רשת) מהתפריט למטה ולחצו "הפעל מצלמה".</p>
+  </div>
+
+  <canvas id="hud"></canvas>
+  <canvas id="analysis"></canvas>
+
+  <div id="topbar">
+    <div class="chip"><span class="rec-dot" id="recDot"></span><span id="recLabel">לא מקליט</span></div>
+    <div class="chip"><span class="dot" id="confDot"></span><span id="confLabel">אין אות</span></div>
+  </div>
+</div>
+
+<div id="controls">
+  <div id="controlsInner">
+    <div class="row">
+      <select id="deviceSelect"><option value="">בוחרים מצלמה...</option></select>
+      <button id="startBtn" class="primary">▶ הפעל מצלמה</button>
+      <button id="stopBtn" class="ghost" disabled>⏹ כבה מצלמה</button>
+    </div>
+    <div class="row">
+      <button id="calibrateBtn" disabled>🎯 כיול קרקע (איפוס אופק וגובה)</button>
+      <button id="recordBtn" disabled>● התחל הקלטה</button>
+      <span id="recTimer" class="chip hidden" style="font-family:var(--mono);"></span>
+      <span class="spacer"></span>
+      <button id="flipVBtn" class="ghost" title="אם המצלמה מורכבת הפוך">↕ הפוך אנכית</button>
+      <button id="flipHBtn" class="ghost" title="היפוך מראה">↔ הפוך אופקית</button>
+      <button id="invAltBtn" class="ghost" title="אם מד הגובה נע בכיוון הפוך מהמציאות">⇅ הפוך כיוון גובה</button>
+    </div>
+    <div id="downloadWrap"><a id="downloadLink" download="fpv-recording.webm">⬇ הורדת ההקלטה האחרונה</a></div>
+    <div id="status">
+      <b>איך זה עובד:</b> אין לרחפן חיישני אוזון/גובה — התוכנה מנתחת בזמן אמת את קו האופק בתמונה כדי לחשב נטייה (גלגול).
+      כשהרחפן <b>על הקרקע ויציב</b>, לוחצים על "כיול קרקע" כדי לאפס את הבסיס. בזמן הטיסה, סרגל הגובה מציג <b>שינוי יחסי</b> ביחס לנקודת האיפוס,
+      לפי תזוזת קו האופק בתמונה — זו הערכה חזותית ולא מדידה מדויקת בס"מ/מטר, ותלויה בזווית הרכבת המצלמה ובניגודיות שמיים/קרקע.
+    </div>
+  </div>
+  <button id="panelToggle" class="ghost">▾ צמצם פאנל</button>
+</div>
+
+<script>
+(function(){
+  'use strict';
+
+  // ---------------- DOM ----------------
+  const video = document.getElementById('video');
+  const hud = document.getElementById('hud');
+  const hudCtx = hud.getContext('2d');
+  const analysisCanvas = document.getElementById('analysis');
+  const analysisCtx = analysisCanvas.getContext('2d', { willReadFrequently: true });
+  const placeholder = document.getElementById('placeholder');
+
+  const deviceSelect = document.getElementById('deviceSelect');
+  const startBtn = document.getElementById('startBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const calibrateBtn = document.getElementById('calibrateBtn');
+  const recordBtn = document.getElementById('recordBtn');
+  const recTimerEl = document.getElementById('recTimer');
+  const recDot = document.getElementById('recDot');
+  const recLabel = document.getElementById('recLabel');
+  const confDot = document.getElementById('confDot');
+  const confLabel = document.getElementById('confLabel');
+  const downloadWrap = document.getElementById('downloadWrap');
+  const downloadLink = document.getElementById('downloadLink');
+  const flipVBtn = document.getElementById('flipVBtn');
+  const flipHBtn = document.getElementById('flipHBtn');
+  const invAltBtn = document.getElementById('invAltBtn');
+  const panelToggle = document.getElementById('panelToggle');
+  const controlsInner = document.getElementById('controlsInner');
+
+  // ---------------- colors ----------------
+  const COL_GREEN = '#5CFF7A';
+  const COL_AMBER = '#FFB300';
+  const COL_RED   = '#FF4D4D';
+  const COL_WHITE = '#FFFFFF';
+
+  // ---------------- state ----------------
+  let currentStream = null;
+  let analysisW = 160, analysisH = 90;
+  let flipH = false, flipV = false, invertAlt = false;
+
+  let lastGoodRow = null;          // Float64Array per-column tracked row (analysis space)
+  let smoothedRoll = 0;            // degrees
+  let smoothedCenterY = 45;        // analysis-space px
+  let detectionConfidence = 0;     // 0..1
+  let framesSinceLost = 0;
+
+  let calibrated = false;
+  let rollZero = 0;
+  let centerYZero = 45;
+
+  let mediaRecorder = null;
+  let recordedChunks = [];
+  let recording = false;
+  let recordStartTs = 0;
+  let recTimerHandle = null;
+
+  let rafId = null;
+  let lastAnalysisTs = 0;
+  const ANALYSIS_INTERVAL_MS = 1000 / 18; // ~18 horizon analyses per second
+
+  // ================= Camera enumeration =================
+  async function refreshDeviceList(){
+    try{
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cams = devices.filter(d => d.kind === 'videoinput');
+      deviceSelect.innerHTML = '';
+      if (cams.length === 0){
+        const opt = document.createElement('option');
+        opt.value = ''; opt.textContent = 'לא נמצאו מצלמות';
+        deviceSelect.appendChild(opt);
+        return;
+      }
+      cams.forEach((d, i) => {
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.textContent = d.label || ('מצלמה ' + (i+1));
+        deviceSelect.appendChild(opt);
+      });
+    } catch(err){
+      console.error('enumerateDevices failed', err);
+    }
+  }
+
+  async function primeDeviceLabels(){
+    // Some browsers only reveal device labels after a permission grant.
+    try{
+      const tmp = await navigator.mediaDevices.getUserMedia({ video: true });
+      tmp.getTracks().forEach(t => t.stop());
+    } catch(e){ /* ignore - user can still pick a device blind */ }
+    await refreshDeviceList();
+  }
+
+  navigator.mediaDevices.addEventListener && navigator.mediaDevices.addEventListener('devicechange', refreshDeviceList);
+  primeDeviceLabels();
+
+  // ================= Start / stop camera =================
+  async function startCamera(){
+    stopCamera();
+    const deviceId = deviceSelect.value;
+    const constraints = {
+      audio: false,
+      video: deviceId
+        ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
+        : { width: { ideal: 1280 }, height: { ideal: 720 } }
+    };
+    try{
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      currentStream = stream;
+      video.srcObject = stream;
+      await video.play();
+      placeholder.style.display = 'none';
+      resizeAll();
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      calibrateBtn.disabled = false;
+      recordBtn.disabled = false;
+      calibrated = false;
+      lastGoodRow = null;
+      setStatusText('מצלמה פעילה — אופק לא מכויל. הניחו את הרחפן יציב על הקרקע ולחצו "כיול קרקע".');
+      if (!rafId) loop();
+      await refreshDeviceList(); // labels now resolved
+    } catch(err){
+      console.error(err);
+      alert('לא ניתן לגשת למצלמה הנבחרת. ודאו שניתנה הרשאת מצלמה בדפדפן, ושאף תוכנה אחרת לא תופסת את המכשיר.\n\n' + err.message);
+    }
+  }
+
+  function stopCamera(){
+    if (recording) stopRecording();
+    if (currentStream){
+      currentStream.getTracks().forEach(t => t.stop());
+      currentStream = null;
+    }
+    video.srcObject = null;
+    placeholder.style.display = 'flex';
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    calibrateBtn.disabled = true;
+    recordBtn.disabled = true;
+    setConfidence(0, 'אין אות');
+  }
+
+  // ================= Resize handling =================
+  function resizeAll(){
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = window.innerWidth, h = window.innerHeight;
+    hud.width = Math.round(w * dpr);
+    hud.height = Math.round(h * dpr);
+    hud.style.width = w + 'px';
+    hud.style.height = h + 'px';
+    hudCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    if (video.videoWidth && video.videoHeight){
+      analysisH = Math.max(40, Math.round(analysisW * video.videoHeight / video.videoWidth));
+      analysisCanvas.width = analysisW;
+      analysisCanvas.height = analysisH;
+      smoothedCenterY = analysisH / 2;
+      centerYZero = analysisH / 2;
+      lastGoodRow = null;
+    }
+  }
+  window.addEventListener('resize', resizeAll);
+  video.addEventListener('loadedmetadata', resizeAll);
+
+  // ================= Flip handling =================
+  function applyVideoTransform(){
+    let t = '';
+    if (flipH) t += ' scaleX(-1)';
+    if (flipV) t += ' scaleY(-1)';
+    video.style.transform = t.trim() || 'none';
+  }
+  flipHBtn.addEventListener('click', () => { flipH = !flipH; flipHBtn.classList.toggle('toggled', flipH); applyVideoTransform(); });
+  flipVBtn.addEventListener('click', () => { flipV = !flipV; flipVBtn.classList.toggle('toggled', flipV); applyVideoTransform(); });
+  invAltBtn.addEventListener('click', () => { invertAlt = !invertAlt; invAltBtn.classList.toggle('toggled', invertAlt); });
+
+  // ================= Horizon detection =================
+  function sampleAnalysisFrame(){
+    analysisCtx.save();
+    analysisCtx.setTransform(1,0,0,1,0,0);
+    if (flipH || flipV){
+      analysisCtx.translate(flipH ? analysisW : 0, flipV ? analysisH : 0);
+      analysisCtx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
+    }
+    analysisCtx.drawImage(video, 0, 0, analysisW, analysisH);
+    analysisCtx.restore();
+  }
+
+  function detectHorizon(){
+    const w = analysisW, h = analysisH;
+    const img = analysisCtx.getImageData(0, 0, w, h).data;
+    if (!lastGoodRow) lastGoodRow = new Float64Array(w).fill(-1);
+
+    function lum(x, y){
+      const idx = (y * w + x) * 4;
+      return 0.299*img[idx] + 0.587*img[idx+1] + 0.114*img[idx+2];
+    }
+
+    const margin = 16;
+    let sw=0, swx=0, swy=0, swxx=0, swxy=0, n=0;
+    const step = 2; // sample every 2nd column for speed
+
+    for (let x = 1; x < w - 1; x += step){
+      const prev = lastGoodRow[x];
+      let yStart = 2, yEnd = h - 3;
+      if (prev >= 0){
+        yStart = Math.max(2, Math.round(prev - margin));
+        yEnd = Math.min(h - 3, Math.round(prev + margin));
+      }
+      let bestY = -1, bestGrad = 0;
+      for (let y = yStart; y <= yEnd; y++){
+        const above = lum(x, y - 2);
+        const below = lum(x, y + 2);
+        const grad = Math.abs(below - above);
+        if (grad > bestGrad){ bestGrad = grad; bestY = y; }
+      }
+      if (bestY > 0 && bestGrad > 14){
+        lastGoodRow[x] = bestY;
+        const wgt = Math.min(bestGrad, 120);
+        sw += wgt; swx += wgt*x; swy += wgt*bestY;
+        swxx += wgt*x*x; swxy += wgt*x*bestY;
+        n++;
+      } else if (prev < 0) {
+        // never found anything here yet - leave as -1 (full re-search next time)
+      }
+    }
+
+    const minColumns = (w / step) * 0.30;
+    if (n < minColumns){
+      framesSinceLost++;
+      if (framesSinceLost > 25){ lastGoodRow = new Float64Array(w).fill(-1); framesSinceLost = 0; }
+      return false;
+    }
+    framesSinceLost = 0;
+
+    const denom = sw*swxx - swx*swx;
+    if (Math.abs(denom) < 1e-6) return false;
+    const m = (sw*swxy - swx*swy) / denom;
+    const b = (swxx*swy - swx*swxy) / denom;
+
+    const rollDeg = Math.atan(m) * 180 / Math.PI;
+    const centerY = m * (w/2) + b;
+
+    const alpha = 0.22;
+    smoothedRoll += alpha * (rollDeg - smoothedRoll);
+    smoothedCenterY += alpha * (centerY - smoothedCenterY);
+    detectionConfidence = Math.min(1, detectionConfidence + 0.12);
+    return true;
+  }
+
+  function setConfidence(level, label){
+    confDot.className = 'dot';
+    if (level > 0.6){ confDot.classList.add('good'); }
+    else if (level > 0.2){ confDot.classList.add('warn'); }
+    else { confDot.classList.add('bad'); }
+    confLabel.textContent = label;
+  }
+
+  // ================= HUD drawing =================
+  function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+
+  function drawHud(){
+    const w = window.innerWidth, h = window.innerHeight;
+    hudCtx.clearRect(0, 0, w, h);
+    if (!currentStream) return;
+
+    const haveSignal = detectionConfidence > 0.15;
+    const rollDeg = smoothedRoll;
+    const centerYCanvas = (smoothedCenterY / analysisH) * h;
+
+    // ---- thin raw horizon confirmation line across the live video ----
+    if (haveSignal){
+      hudCtx.save();
+      hudCtx.strokeStyle = 'rgba(92,255,122,0.55)';
+      hudCtx.lineWidth = 1.5;
+      hudCtx.setLineDash([6,5]);
+      const dy = Math.tan(rollDeg * Math.PI/180) * (w/2);
+      hudCtx.beginPath();
+      hudCtx.moveTo(0, centerYCanvas - dy);
+      hudCtx.lineTo(w, centerYCanvas + dy);
+      hudCtx.stroke();
+      hudCtx.restore();
+    }
+
+    // ---- compact ADI gauge, bottom-center ----
+    const gx = w/2, gy = h - 168, gr = 64;
+    drawADI(gx, gy, gr, rollDeg, smoothedCenterY - centerYZero, haveSignal);
+
+    // ---- altitude tape, to the right of the gauge ----
+    const displayAlt = calibrated ? (centerYZero - smoothedCenterY) * (invertAlt ? -1 : 1) : 0;
+    drawAltTape(gx + gr + 56, gy, 190, displayAlt, haveSignal);
+
+    // ---- readout text under gauge ----
+    hudCtx.save();
+    hudCtx.font = '13px "Share Tech Mono", monospace';
+    hudCtx.fillStyle = haveSignal ? COL_GREEN : 'rgba(92,255,122,0.35)';
+    hudCtx.textAlign = 'center';
+    const displayRoll = calibrated ? (rollDeg - rollZero) : rollDeg;
+    hudCtx.fillText('ROLL ' + (displayRoll >= 0 ? '+' : '') + displayRoll.toFixed(1) + '°', gx, gy + gr + 22);
+    hudCtx.restore();
+
+    if (!calibrated){
+      hudCtx.save();
+      hudCtx.font = '12px "Share Tech Mono", monospace';
+      hudCtx.fillStyle = COL_AMBER;
+      hudCtx.textAlign = 'center';
+      hudCtx.fillText('UNCALIBRATED', gx, gy + gr + 40);
+      hudCtx.restore();
+    }
+  }
+
+  function drawADI(cx, cy, r, rollDeg, pitchPx, haveSignal){
+    const ctx = hudCtx;
+    const rollRel = (calibrated ? rollDeg - rollZero : rollDeg) * Math.PI/180;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI*2);
+    ctx.clip();
+    ctx.fillStyle = 'rgba(4,8,9,0.55)';
+    ctx.fillRect(cx-r, cy-r, r*2, r*2);
+
+    ctx.translate(cx, cy);
+    ctx.rotate(-rollRel);
+    const shift = clamp(pitchPx * 0.6, -r*0.7, r*0.7);
+    ctx.fillStyle = 'rgba(28,58,82,0.55)';
+    ctx.fillRect(-r*1.6, -r*1.6, r*3.2, r*1.6 + shift);
+    ctx.fillStyle = 'rgba(43,33,23,0.55)';
+    ctx.fillRect(-r*1.6, shift, r*3.2, r*1.6);
+    ctx.strokeStyle = haveSignal ? COL_GREEN : 'rgba(92,255,122,0.35)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(-r*1.6, shift); ctx.lineTo(r*1.6, shift); ctx.stroke();
+    // a couple of pitch reference ticks
+    ctx.lineWidth = 1.2;
+    [ -20, 20 ].forEach(off => {
+      ctx.beginPath(); ctx.moveTo(-14, shift - off*0.9); ctx.lineTo(14, shift - off*0.9); ctx.stroke();
+    });
+    ctx.restore();
+
+    // outer ring
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2);
+    ctx.strokeStyle = haveSignal ? COL_GREEN : 'rgba(92,255,122,0.35)';
+    ctx.lineWidth = 2; ctx.stroke();
+
+    // fixed reference index at top (0 roll)
+    ctx.beginPath();
+    ctx.moveTo(cx, cy-r-3); ctx.lineTo(cx-5, cy-r-13); ctx.lineTo(cx+5, cy-r-13); ctx.closePath();
+    ctx.fillStyle = 'rgba(231,245,234,0.5)'; ctx.fill();
+
+    // moving bank pointer
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(-rollRel);
+    ctx.beginPath();
+    ctx.moveTo(0, -r-2); ctx.lineTo(-6, -r-15); ctx.lineTo(6, -r-15); ctx.closePath();
+    ctx.fillStyle = haveSignal ? COL_GREEN : 'rgba(92,255,122,0.35)';
+    ctx.fill();
+    ctx.restore();
+
+    // fixed aircraft/drone reference symbol (always centered, never rotates)
+    ctx.strokeStyle = COL_WHITE; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cx-r*0.55, cy); ctx.lineTo(cx-8, cy);
+    ctx.moveTo(cx+8, cy); ctx.lineTo(cx+r*0.55, cy);
+    ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, 3, 0, Math.PI*2); ctx.fillStyle = COL_WHITE; ctx.fill();
+  }
+
+  function drawAltTape(x, cy, heightPx, altUnits, haveSignal){
+    const ctx = hudCtx;
+    const scalePxPerUnit = 3.2;
+    const tapeW = 64;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x - tapeW/2, cy - heightPx/2, tapeW, heightPx);
+    ctx.clip();
+    ctx.fillStyle = 'rgba(4,8,9,0.55)';
+    ctx.fillRect(x - tapeW/2, cy - heightPx/2, tapeW, heightPx);
+
+    ctx.strokeStyle = haveSignal ? COL_GREEN : 'rgba(92,255,122,0.35)';
+    ctx.fillStyle = haveSignal ? COL_GREEN : 'rgba(92,255,122,0.35)';
+    ctx.font = '11px "Share Tech Mono", monospace';
+    ctx.textAlign = 'left';
+    ctx.lineWidth = 1;
+
+    const topUnit = altUnits + (heightPx/2)/scalePxPerUnit;
+    const bottomUnit = altUnits - (heightPx/2)/scalePxPerUnit;
+    const startTick = Math.floor(bottomUnit / 5) * 5;
+    for (let u = startTick; u <= topUnit; u += 5){
+      const y = cy - (u - altUnits) * scalePxPerUnit;
+      const major = (Math.round(u) % 10 === 0);
+      ctx.beginPath();
+      ctx.moveTo(x - tapeW/2, y);
+      ctx.lineTo(x - tapeW/2 + (major ? 14 : 7), y);
+      ctx.stroke();
+      if (major) ctx.fillText(String(Math.round(u)), x - tapeW/2 + 18, y + 4);
+    }
+    ctx.restore();
+
+    ctx.strokeStyle = haveSignal ? COL_GREEN : 'rgba(92,255,122,0.35)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(x - tapeW/2, cy - heightPx/2, tapeW, heightPx);
+
+    // center pointer + digital readout box
+    ctx.beginPath();
+    ctx.moveTo(x - tapeW/2 - 8, cy);
+    ctx.lineTo(x - tapeW/2, cy - 7);
+    ctx.lineTo(x - tapeW/2, cy + 7);
+    ctx.closePath();
+    ctx.fillStyle = haveSignal ? COL_GREEN : 'rgba(92,255,122,0.35)';
+    ctx.fill();
+
+    ctx.save();
+    ctx.font = 'bold 13px "Share Tech Mono", monospace';
+    ctx.fillStyle = '#04150A';
+    const label = 'ALT ' + (altUnits >= 0 ? '+' : '') + altUnits.toFixed(0);
+    const tw = ctx.measureText(label).width + 12;
+    ctx.fillStyle = haveSignal ? COL_GREEN : 'rgba(92,255,122,0.6)';
+    ctx.fillRect(x - tapeW/2 - 8 - tw, cy - 11, tw, 22);
+    ctx.fillStyle = '#04150A';
+    ctx.textAlign = 'right';
+    ctx.fillText(label, x - tapeW/2 - 14, cy + 4);
+    ctx.restore();
+  }
+
+  // ================= Main loop =================
+  function loop(ts){
+    rafId = requestAnimationFrame(loop);
+    if (!currentStream || video.readyState < 2) return;
+
+    if (!lastAnalysisTs || ts - lastAnalysisTs >= ANALYSIS_INTERVAL_MS){
+      lastAnalysisTs = ts;
+      sampleAnalysisFrame();
+      const ok = detectHorizon();
+      if (!ok) detectionConfidence = Math.max(0, detectionConfidence - 0.06);
+      if (detectionConfidence > 0.6) setConfidence(detectionConfidence, 'אופק יציב');
+      else if (detectionConfidence > 0.15) setConfidence(detectionConfidence, 'אופק חלש');
+      else setConfidence(detectionConfidence, 'אין זיהוי אופק');
+    }
+    drawHud();
+  }
+
+  // ================= Calibration =================
+  calibrateBtn.addEventListener('click', () => {
+    if (detectionConfidence < 0.15){
+      alert('לא זוהה קו אופק ברור עדיין. ודאו שיש ניגודיות בין שמיים/רקע לקרקע בפריים, ונסו שוב.');
+      return;
+    }
+    rollZero = smoothedRoll;
+    centerYZero = smoothedCenterY;
+    calibrated = true;
+    setStatusText('כויל בהצלחה ✓ — סרגל הגלגול והגובה מאופסים לנקודת הקרקע הנוכחית.');
+    flashChip(calibrateBtn);
+  });
+
+  function flashChip(el){
+    el.classList.add('toggled');
+    setTimeout(() => el.classList.remove('toggled'), 600);
+  }
+
+  function setStatusText(t){
+    document.getElementById('status').innerHTML = '<b>סטטוס:</b> ' + t;
+  }
+
+  // ================= Recording =================
+  function pickMime(){
+    const options = [
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8',
+      'video/webm'
+    ];
+    for (const o of options){
+      if (window.MediaRecorder && MediaRecorder.isTypeSupported(o)) return o;
+    }
+    return '';
+  }
+
+  function startRecording(){
+    if (!currentStream || !recordStream) return;
+    recordedChunks = [];
+    const mime = pickMime();
+    try{
+      mediaRecorder = new MediaRecorder(recordStream, mime ? { mimeType: mime } : undefined);
+    } catch(e){
+      alert('הדפדפן לא תומך בהקלטת וידאו (MediaRecorder). נסו דפדפן מבוסס Chrome/Edge עדכני.');
+      return;
+    }
+    mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) recordedChunks.push(e.data); };
+    mediaRecorder.onstop = onRecordingStop;
+    mediaRecorder.start(1000);
+    recording = true;
+    recordStartTs = Date.now();
+    recordBtn.textContent = '■ עצור הקלטה';
+    recordBtn.classList.add('danger');
+    recDot.classList.add('live');
+    recLabel.textContent = 'מקליט';
+    recTimerEl.classList.remove('hidden');
+    recTimerHandle = setInterval(updateRecTimer, 250);
+    downloadWrap.style.display = 'none';
+  }
+
+  function updateRecTimer(){
+    const secs = Math.floor((Date.now() - recordStartTs)/1000);
+    const mm = String(Math.floor(secs/60)).padStart(2,'0');
+    const ss = String(secs%60).padStart(2,'0');
+    recTimerEl.textContent = '● ' + mm + ':' + ss;
+  }
+
+  function stopRecording(){
+    if (mediaRecorder && recording){
+      mediaRecorder.stop();
+    }
+  }
+
+  function onRecordingStop(){
+    recording = false;
+    recordBtn.textContent = '● התחל הקלטה';
+    recordBtn.classList.remove('danger');
+    recDot.classList.remove('live');
+    recLabel.textContent = 'לא מקליט';
+    clearInterval(recTimerHandle);
+    recTimerEl.classList.add('hidden');
+
+    if (recordedChunks.length){
+      const blob = new Blob(recordedChunks, { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      const ts = new Date();
+      const fname = 'fpv-' + ts.toISOString().replace(/[:.]/g,'-') + '.webm';
+      downloadLink.href = url;
+      downloadLink.download = fname;
+      downloadWrap.style.display = 'block';
+    }
+  }
+
+  recordBtn.addEventListener('click', () => { recording ? stopRecording() : startRecording(); });
+
+  // ================= Recording compositor (video + HUD together) =================
+  // A dedicated hidden canvas combines the live video and the HUD overlay every frame,
+  // and that combined canvas is what actually gets recorded.
+  const recCanvas = document.createElement('canvas');
+  const recCtx = recCanvas.getContext('2d');
+  let recordStream = null;
+
+  function ensureRecCanvasSize(){
+    recCanvas.width = window.innerWidth;
+    recCanvas.height = window.innerHeight;
+  }
+  window.addEventListener('resize', ensureRecCanvasSize);
+  ensureRecCanvasSize();
+
+  function composeRecFrame(){
+    if (recCanvas.width !== window.innerWidth || recCanvas.height !== window.innerHeight) ensureRecCanvasSize();
+    recCtx.fillStyle = '#000';
+    recCtx.fillRect(0,0,recCanvas.width, recCanvas.height);
+    if (video.readyState >= 2){
+      recCtx.save();
+      if (flipH || flipV){
+        recCtx.translate(flipH ? recCanvas.width : 0, flipV ? recCanvas.height : 0);
+        recCtx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
+      }
+      // cover fit
+      const vw = video.videoWidth, vh = video.videoHeight;
+      if (vw && vh){
+        const cw = recCanvas.width, ch = recCanvas.height;
+        const scale = Math.max(cw/vw, ch/vh);
+        const dw = vw*scale, dh = vh*scale;
+        const dx = (cw-dw)/2, dy = (ch-dh)/2;
+        recCtx.drawImage(video, dx, dy, dw, dh);
+      }
+      recCtx.restore();
+    }
+    recCtx.drawImage(hud, 0, 0, hud.width, hud.height, 0, 0, recCanvas.width, recCanvas.height);
+    requestAnimationFrame(composeRecFrame);
+  }
+  composeRecFrame();
+  recordStream = recCanvas.captureStream(30);
+
+  // ================= Buttons =================
+  startBtn.addEventListener('click', startCamera);
+  stopBtn.addEventListener('click', stopCamera);
+
+  panelToggle.addEventListener('click', () => {
+    const collapsed = controlsInner.classList.toggle('hidden');
+    panelToggle.textContent = collapsed ? '▴ הרחב פאנל' : '▾ צמצם פאנל';
+  });
+
+  // initial sizing
+  resizeAll();
+  drawHud();
+})();
+</script>
+</body>
+</html>
